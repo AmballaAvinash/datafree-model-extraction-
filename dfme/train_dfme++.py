@@ -407,7 +407,7 @@ def main():
             scheduler_S.step()
             scheduler_G.step()
         
-        # train
+
         train(args, teacher=teacher, student=student, generator=generator, device=device, optimizer=[optimizer_S, optimizer_G], epoch=epoch)
         # Test
         acc = test(args, student=student, generator=generator, device = device, test_loader = test_loader, epoch=epoch)
