@@ -264,13 +264,12 @@ def main():
 
     generator.eval()
 
+
+
     queries = 1000
     
-    
-
-    correct = 0
-    dist_student = np.zeros(classes)
-    dist_teacher = np.zeros(10)
+    dist_student = np.zeros(num_classes)
+    dist_teacher = np.zeros(num_classes)
     with torch.no_grad():     
             z = torch.randn((queries, args.nz)).to(device)
             
