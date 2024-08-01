@@ -264,7 +264,7 @@ def main():
 
     generator.eval()
 
-    print(next(model.parameters()).device)
+    print(next(generator.parameters()).device)
 
     queries = 1000
     
