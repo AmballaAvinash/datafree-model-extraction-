@@ -240,201 +240,58 @@ def main():
 
     args = parser.parse_args()
 
-
-    args.query_budget *=  10**6
-    args.query_budget = int(args.query_budget)
-    if args.MAZE:
-
-        print("\n"*2)
-        print("#### /!\ OVERWRITING ALL PARAMETERS FOR MAZE REPLCIATION ####")
-        print("\n"*2)
-        args.scheduer = "cosine"
-        args.loss = "kl"
-        args.batch_size = 128
-        args.g_iter = 1
-        args.d_iter = 5
-        args.grad_m = 10
-        args.lr_G = 1e-4 
-        args.lr_S = 1e-1
-
-
-    if args.student_model not in classifiers:
-        if "wrn" not in args.student_model:
-            raise ValueError("Unknown model")
-
-
-    pprint(args, width= 80)
-    print(args.log_dir)
-    os.makedirs(args.log_dir, exist_ok=True)
-
-    if args.store_checkpoints:
-        os.makedirs(args.log_dir + "/checkpoint", exist_ok=True)
-
     
-    # Save JSON with parameters
-    with open(args.log_dir + "/parameters.json", "w") as f:
-        json.dump(vars(args), f)
-
-    with open(args.log_dir + "/loss.csv", "w") as f:
-        f.write("epoch,loss_G,loss_S\n")
-
-    with open(args.log_dir + "/accuracy.csv", "w") as f:
-        f.write("epoch,accuracy\n")
-
-    if args.rec_grad_norm:
-        with open(args.log_dir + "/norm_grad.csv", "w") as f:
-            f.write("epoch,G_grad_norm,S_grad_norm,grad_wrt_X\n")
-
-    with open("latest_experiments.txt", "a") as f:
-        f.write(args.log_dir + "\n")
+    num_classes = 10 
+    name = 'resnet34_8x'
     use_cuda = not args.no_cuda and torch.cuda.is_available()
-
-    # Prepare the environment
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    random.seed(args.seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    
     device = torch.device("cuda:%d"%args.device if use_cuda else "cpu")
-    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
+    # load teacher, genertor and student models
     
-    # Preparing checkpoints for the best Student
-    global file
-    model_dir = f"checkpoint/student_{args.model_id}"; args.model_dir = model_dir
-    if(not os.path.exists(model_dir)):
-        os.makedirs(model_dir)
-    with open(f"{model_dir}/model_info.txt", "w") as f:
-        json.dump(args.__dict__, f, indent=2)  
-    file = open(f"{args.model_dir}/logs.txt", "w") 
-
-    print(args)
-
-    args.device = device
-
-    # Eigen values and vectors of the covariance matrix
-    _, test_loader = get_dataloader(args)
-
-
-    args.normalization_coefs = None
-    args.G_activation = torch.tanh
-
-    num_classes = 10 if args.dataset in ['cifar10', 'svhn'] else 100
-    args.num_classes = num_classes
-
-    if args.model == 'resnet34_8x':
-        teacher = network.resnet_8x.ResNet34_8x(num_classes=num_classes)
-        if args.dataset == 'svhn':
-            print("Loading SVHN TEACHER")
-            args.ckpt = 'checkpoint/teacher/svhn-resnet34_8x.pt'
-        teacher.load_state_dict( torch.load( args.ckpt, map_location=device) )
-    else:
-        teacher = get_classifier(args.model, pretrained=True, num_classes=args.num_classes)
-    
-    
+    teacher = network.resnet_8x.ResNet34_8x(num_classes=num_classes)
+    teacher.load_state_dict( torch.load( args.ckpt, map_location=device) )
 
     teacher.eval()
-    teacher = teacher.to(device)
-    myprint("Teacher restored from %s"%(args.ckpt)) 
-    print(f"\n\t\tTraining with {args.model} as a Target\n") 
-    correct = 0
-    with torch.no_grad():
-        for i, (data, target) in enumerate(test_loader):
-            data, target = data.to(device), target.to(device)
-            output = teacher(data)
-            pred = output.argmax(dim=1, keepdim=True) # get the index of the max log-probability
-            correct += pred.eq(target.view_as(pred)).sum().item()
-    accuracy = 100. * correct / len(test_loader.dataset)
-    print('\nTeacher - Test set: Accuracy: {}/{} ({:.4f}%)\n'.format(correct, len(test_loader.dataset),accuracy))
+
+
+    student = get_classifier(args.student_model, pretrained=False, num_classes=num_classes)
+    student.load_state_dict( torch.load( args.log_dir + "/checkpoint/student.pt", map_location=device) )
     
-    
-    
-    student = get_classifier(args.student_model, pretrained=False, num_classes=args.num_classes)
+    student.eval()
     
     generator = network.gan.GeneratorA(nz=args.nz, nc=3, img_size=32, activation=args.G_activation)
+    generator.load_state_dict( torch.load( args.log_dir + "/checkpoint/generator.pt", map_location=device) )
 
+    generator.eval()
 
+    queries = 1000
     
-    student = student.to(device)
-    generator = generator.to(device)
-
-    args.generator = generator
-    args.student = student
-    args.teacher = teacher
-
     
-    if args.student_load_path :
-        # "checkpoint/student_no-grad/cifar10-resnet34_8x.pt"
-        student.load_state_dict( torch.load( args.student_load_path ) )
-        myprint("Student initialized from %s"%(args.student_load_path))
-        acc = test(args, student=student, generator=generator, device = device, test_loader = test_loader)
 
-    ## Compute the number of epochs with the given query budget:
-    args.cost_per_iteration = args.batch_size * (args.g_iter * (args.grad_m+1) + args.d_iter)
+    correct = 0
+    dist_student = np.zeros(classes)
+    dist_teacher = np.zeros(10)
+    with torch.no_grad():     
+            z = torch.randn((queries, args.nz)).to(device)
+            
+            #Get fake image from generator
+            fake = generator(z, pre_x=args.approx_grad) # pre_x returns the output of G before applying the activation
 
-    number_epochs = args.query_budget // (args.cost_per_iteration * args.epoch_itrs) + 1
-
-    print (f"\nTotal budget: {args.query_budget//1000}k")
-    print ("Cost per iterations: ", args.cost_per_iteration)
-    print ("Total number of epochs: ", number_epochs)
-
-    optimizer_S = optim.SGD( student.parameters(), lr=args.lr_S, weight_decay=args.weight_decay, momentum=0.9 )
-
-    if args.MAZE:
-        optimizer_G = optim.SGD( generator.parameters(), lr=args.lr_G , weight_decay=args.weight_decay, momentum=0.9 )    
-    else:
-        optimizer_G = optim.Adam( generator.parameters(), lr=args.lr_G )
+            output_teacher = teacher(fake)
+            
+            output_sudent = student(fake)
+            
+            pred_student = output_sudent.argmax(dim=1) # get the index of the max log-probability
+            
+            pred_teacher = output_teacher.argmax(dim=1) # get the index of the max log-probability
+            
+            dist_teacher[pred_teacher]+=1
+            
+            dist_student[pred_student]+=1
+   
     
-    steps = sorted([int(step * number_epochs) for step in args.steps])
-    print("Learning rate scheduling at steps: ", steps)
-    print()
-
-    if args.scheduler == "multistep":
-        scheduler_S = optim.lr_scheduler.MultiStepLR(optimizer_S, steps, args.scale)
-        scheduler_G = optim.lr_scheduler.MultiStepLR(optimizer_G, steps, args.scale)
-    elif args.scheduler == "cosine":
-        scheduler_S = optim.lr_scheduler.CosineAnnealingLR(optimizer_S, number_epochs)
-        scheduler_G = optim.lr_scheduler.CosineAnnealingLR(optimizer_G, number_epochs)
-
-
-    best_acc = 0
-    acc_list = []
-
-    for epoch in range(1, number_epochs + 1):
-        # Train
-        if args.scheduler != "none":
-            scheduler_S.step()
-            scheduler_G.step()
-        
-
-        train(args, teacher=teacher, student=student, generator=generator, device=device, optimizer=[optimizer_S, optimizer_G], epoch=epoch)
-        # Test
-        acc = test(args, student=student, generator=generator, device = device, test_loader = test_loader, epoch=epoch)
-        acc_list.append(acc)
-        if acc>best_acc:
-            best_acc = acc
-            name = 'resnet34_8x'
-            torch.save(student.state_dict(),f"checkpoint/student_{args.model_id}/{args.dataset}-{name}.pt")
-            torch.save(generator.state_dict(),f"checkpoint/student_{args.model_id}/{args.dataset}-{name}-generator.pt")
-        # vp.add_scalar('Acc', epoch, acc)
-        if args.store_checkpoints:
-            torch.save(student.state_dict(), args.log_dir + f"/checkpoint/student.pt")
-            torch.save(generator.state_dict(), args.log_dir + f"/checkpoint/generator.pt")
-    myprint("Best Acc=%.6f"%best_acc)
-
-    with open(args.log_dir + "/Max_accuracy = %f"%best_acc, "w") as f:
-        f.write(" ")
-
-     
-
-    import csv
-    os.makedirs('log', exist_ok=True)
-    with open('log/DFAD-%s.csv'%(args.dataset), 'a') as f:
-        writer = csv.writer(f)
-        writer.writerow(acc_list)
-
-
+    print(f"Student dist {dist_student}")
+    print(f"Teacher dist {dist_teacher}")
+   
 if __name__ == '__main__':
     main()
 
