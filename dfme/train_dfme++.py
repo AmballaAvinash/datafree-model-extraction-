@@ -271,7 +271,7 @@ def main():
     dist_student = np.zeros(num_classes)
     dist_teacher = np.zeros(num_classes)
     with torch.no_grad():     
-            z = torch.randn((queries, args.nz)).to(device)
+            z = torch.randn((queries, args.nz))
             
             #Get fake image from generator
             fake = generator(z, pre_x=args.approx_grad) # pre_x returns the output of G before applying the activation
