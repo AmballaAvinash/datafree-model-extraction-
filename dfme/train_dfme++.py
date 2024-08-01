@@ -284,9 +284,15 @@ def main():
             
             pred_teacher = output_teacher.argmax(dim=1) # get the index of the max log-probability
             
-            dist_teacher[pred_teacher]+=1
+            print(pred_teacher)
             
-            dist_student[pred_student]+=1
+            print(pred_student)
+            
+            
+    for i in range(pred_teacher.shape[0]):
+            dist_teacher[pred_teacher[i]]+=1
+            
+            dist_student[pred_student[i]]+=1
    
     
     print(f"Student dist {dist_student}")
