@@ -258,6 +258,7 @@ def main():
     
     student.eval()
     
+    args.G_activation = torch.tanh
     generator = network.gan.GeneratorA(nz=args.nz, nc=3, img_size=32, activation=args.G_activation)
     generator.load_state_dict( torch.load( args.log_dir + "/checkpoint/generator.pt", map_location=device) )
 
