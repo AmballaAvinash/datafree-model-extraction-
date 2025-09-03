@@ -297,6 +297,11 @@ def main():
     
     print(f"Student dist {dist_student}")
     print(f"Teacher dist {dist_teacher}")
+    
+    
+    
+    
+    
    
 if __name__ == '__main__':
     main()
